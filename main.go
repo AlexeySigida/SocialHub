@@ -17,7 +17,7 @@ import (
 	_ "github.com/lib/pq" // postgres driver for database/sql
 )
 
-const psqlInfo = "host=localhost port=5432 user=default password=default dbname=default sslmode=disable"
+const psqlInfo = "host=db port=5432 user=default password=default dbname=default sslmode=disable"
 
 type User struct {
 	FirstName  string `json:"first_name"`
