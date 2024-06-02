@@ -96,17 +96,17 @@ func login(w http.ResponseWriter, r *http.Request) {
 	err_decoding := json.Unmarshal(b, &user)
 
 	if err_decoding != nil {
-		fmt.Fprint(w, err_decoding.Error())
+		http.Error(w, err_decoding.Error(), http.StatusBadRequest)
 	} else {
 		stmt, err := db.Prepare("SELECT username, password FROM public.users WHERE username=$1")
 		if err != nil {
-			fmt.Fprint(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 		defer stmt.Close()
 
 		rows, err := stmt.Query(user.Username)
 		if err != nil {
-			fmt.Fprint(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
 			for rows.Next() {
 				var (
@@ -114,7 +114,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 					password string
 				)
 				if err := rows.Scan(&username, &password); err != nil {
-					fmt.Fprint(w, err.Error())
+					http.Error(w, err.Error(), http.StatusBadRequest)
 				} else {
 					if user.Username == username && sha256StringHash(user.Password) == password {
 						token, _ := generateJWT()
@@ -124,6 +124,8 @@ func login(w http.ResponseWriter, r *http.Request) {
 						token_json, _ := json.Marshal(tok)
 
 						fmt.Fprintln(w, string(token_json))
+					} else {
+						http.Error(w, "Unauthorized", http.StatusUnauthorized)
 					}
 				}
 			}
@@ -149,7 +151,7 @@ func register(w http.ResponseWriter, r *http.Request) {
 	err_decoding := json.Unmarshal(b, &user)
 
 	if err_decoding != nil {
-		fmt.Fprint(w, err_decoding.Error())
+		http.Error(w, err_decoding.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -157,14 +159,14 @@ func register(w http.ResponseWriter, r *http.Request) {
 		"(id,first_name, second_name, birthdate, sex, biography, city, username, password)" +
 		" VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
 	if err != nil {
-		fmt.Fprint(w, err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 	defer stmt.Close()
 
 	dateParse, err_date_parsing := time.Parse("2006-01-02", user.Birthdate)
 
 	if err_date_parsing != nil {
-		fmt.Fprint(w, err_date_parsing.Error())
+		http.Error(w, err_date_parsing.Error(), http.StatusBadRequest)
 	}
 	id := uuid.New()
 	res, err := stmt.Exec(id.String(), user.FirstName,
@@ -176,7 +178,7 @@ func register(w http.ResponseWriter, r *http.Request) {
 		user.Username,
 		sha256StringHash(user.Password))
 	if err != nil {
-		fmt.Fprint(w, err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	} else if res != nil {
 		fmt.Fprintln(w, id.String())
 	}
@@ -192,20 +194,20 @@ func get_user(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if err == jwt.ErrSignatureInvalid {
-			fmt.Fprintln(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		fmt.Fprintln(w, err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if !tkn.Valid {
-		fmt.Fprintln(w, "unauthorized")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	db, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 	defer db.Close()
 
@@ -217,23 +219,23 @@ func get_user(w http.ResponseWriter, r *http.Request) {
 
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 
 	err_decoding := json.Unmarshal(b, &params)
 
 	if err_decoding != nil {
-		fmt.Fprint(w, err_decoding.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	} else {
 		stmt, err := db.Prepare("SELECT first_name,second_name,birthdate,sex,biography,city FROM public.users WHERE id=$1")
 		if err != nil {
-			fmt.Fprint(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 		defer stmt.Close()
 
 		rows, err := stmt.Query(params.Id)
 		if err != nil {
-			fmt.Fprint(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
 			for rows.Next() {
 				var (
@@ -245,7 +247,7 @@ func get_user(w http.ResponseWriter, r *http.Request) {
 					City       string
 				)
 				if err := rows.Scan(&FirstName, &SecondName, &Birthdate, &Sex, &Biography, &City); err != nil {
-					fmt.Fprint(w, err.Error())
+					http.Error(w, err.Error(), http.StatusBadRequest)
 				} else {
 					user := User{FirstName, SecondName, Birthdate, Sex, Biography, City, "", ""}
 					user_json, _ := json.Marshal(user)
