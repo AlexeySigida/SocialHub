@@ -1,5 +1,5 @@
 CREATE TABLE public.users (
-    id VARCHAR(255) PRIMARY KEY,
+    id VARCHAR(255),
     first_name VARCHAR(255),
     second_name VARCHAR(255),
     birthdate DATE,
@@ -7,8 +7,7 @@ CREATE TABLE public.users (
     biography TEXT,
     city VARCHAR(255),
     username VARCHAR(255) NOT NULL,
-    password BYTEA NOT NULL,
-    UNIQUE (username)
+    password BYTEA NOT NULL
 );
 
 INSERT INTO public.users

@@ -58,7 +58,7 @@ func sha256StringHash(input string) string {
 }
 
 func generateJWT() (string, error) {
-	expirationTime := time.Now().Add(5 * time.Minute)
+	expirationTime := time.Now().Add(60 * time.Minute)
 	claims := &Claims{
 		Username: "username",
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -312,13 +312,13 @@ func search_like_fname_sname(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	stmt, err := db.Prepare("SELECT first_name,second_name,birthdate,sex,biography,city FROM public.users WHERE first_name LIKE $1 AND second_name LIKE $2")
+	stmt, err := db.Prepare("SELECT first_name,second_name FROM public.users WHERE first_name LIKE $1 AND second_name LIKE $2")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 	defer stmt.Close()
 
-	rows, err := stmt.Query(fmt.Sprintf("%%%s%%", params.Fname), fmt.Sprintf("%%%s%%", params.Sname))
+	rows, err := stmt.Query(fmt.Sprintf("%s%%", params.Fname), fmt.Sprintf("%s%%", params.Sname))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	} else {
@@ -327,15 +327,11 @@ func search_like_fname_sname(w http.ResponseWriter, r *http.Request) {
 			var (
 				FirstName  string
 				SecondName string
-				Birthdate  string
-				Sex        string
-				Biography  string
-				City       string
 			)
-			if err := rows.Scan(&FirstName, &SecondName, &Birthdate, &Sex, &Biography, &City); err != nil {
+			if err := rows.Scan(&FirstName, &SecondName); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 			} else {
-				user := User{FirstName, SecondName, Birthdate, Sex, Biography, City, "", ""}
+				user := User{FirstName, SecondName, "", "", "", "", "", ""}
 				users = append(users, user)
 			}
 		}
