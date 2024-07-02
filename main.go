@@ -17,7 +17,8 @@ import (
 	_ "github.com/lib/pq" // postgres driver for database/sql
 )
 
-const psqlInfo = "host=db port=5432 user=default password=default dbname=default sslmode=disable"
+const psqlMasterInfo = "host=pgmaster port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
+const psqlSlaveInfo = "host=pgslave port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
 
 type User struct {
 	FirstName  string `json:"first_name"`
@@ -91,7 +92,7 @@ func main() {
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
-	db, err := sql.Open("postgres", psqlInfo)
+	db, err := sql.Open("postgres", psqlMasterInfo)
 	if err != nil {
 		panic(err)
 	}
@@ -146,7 +147,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 }
 
 func register(w http.ResponseWriter, r *http.Request) {
-	db, err := sql.Open("postgres", psqlInfo)
+	db, err := sql.Open("postgres", psqlMasterInfo)
 	if err != nil {
 		panic(err)
 	}
@@ -216,7 +217,7 @@ func get_user(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := sql.Open("postgres", psqlInfo)
+	db, err := sql.Open("postgres", psqlSlaveInfo)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
@@ -291,7 +292,7 @@ func search_like_fname_sname(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := sql.Open("postgres", psqlInfo)
+	db, err := sql.Open("postgres", psqlSlaveInfo)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
