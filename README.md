@@ -4,8 +4,11 @@
 
 
 1. git clone
-2. docker build -t social-hub:0.0.1
-3. docker compose up -d
+2. docker build -t social-hub:0.0.3
+3. docker network create pgnet
+4. docker compose -f be-compose.yml up -d
+5. docker compose -f db-compose.yml up -d
+6. в init.sql закомментировано заполнение тестовыми данными
 
 
 ## Тестирование

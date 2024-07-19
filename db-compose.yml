@@ -1,35 +1,61 @@
-# Use postgres/example user/password credentials
-version: '3.9'
+version: '3.8'
 
 services:
-  db:
-    image: postgres:16.2
-    restart: always
-    # set shared memory limit when using docker-compose
-    shm_size: 128mb
-    # or set shared memory limit when deploy via swarm stack
-    #volumes:
-    #  - type: tmpfs
-    #    target: /dev/shm
-    #    tmpfs:
-    #      size: 134217728 # 128*2^20 bytes = 128Mb
+  master:
+    image: postgres:latest
+    container_name: postgres-master
     environment:
-      POSTGRES_PASSWORD: default
-      POSTGRES_USER: default
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pass
+    ports:
+      - "5432:5432"
     volumes:
+      - master_data:/var/lib/postgresql/data
+      - ./master-init.sh:/docker-entrypoint-initdb.d/master-init.sh
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - 5432:5432
     networks:
-      - social-network
-      
-  back:
-    image: social-hub:0.0.2
+      - pgnet_ext
+
+  slave1:
+    image: postgres:latest
+    container_name: postgres-slave1
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pass
+    depends_on:
+      - master
     ports:
-      - 8080:8080
+      - "15432:5432"
+    volumes:
+      - slave1_data:/var/lib/postgresql/data
+      - ./slave-init.sh:/docker-entrypoint-initdb.d/slave-init.sh
+    command: "postgres -c synchronous_standby_names='*'"
     networks:
-      - social-network
+      - pgnet_ext
+
+  slave2:
+    image: postgres:latest
+    container_name: postgres-slave2
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pass
+    depends_on:
+      - master
+    ports:
+      - "25432:5432"
+    volumes:
+      - slave2_data:/var/lib/postgresql/data
+      - ./slave-init.sh:/docker-entrypoint-initdb.d/slave-init.sh
+    command: "postgres -c synchronous_standby_names='*'"
+    networks:
+      - pgnet_ext
+
+volumes:
+ master_data:
+ slave1_data:
+ slave2_data:
 
 networks:
-  social-network:
-    driver: bridge
+  pgnet_ext:
+    name: pgnet
+    external: true
