@@ -1,0 +1,15 @@
+# Use postgres/example user/password credentials
+version: '3.9'
+
+services:
+  back:
+    image: social-hub:0.0.3
+    ports:
+      - 8080:8080
+    networks:
+      - pgnet_ext
+
+networks:
+  pgnet_ext:
+    name: pgnet
+    external: true

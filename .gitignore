@@ -1,2 +1,10 @@
 go.mod
 go.sum
+res*
+r10*
+*jmx
+*jtl
+*txt
+*log
+volumes
+*conf

@@ -17,7 +17,8 @@ import (
 	_ "github.com/lib/pq" // postgres driver for database/sql
 )
 
-const psqlInfo = "host=db port=5432 user=default password=default dbname=default sslmode=disable"
+const psqlMasterInfo = "host=master port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
+const psqlSlaveInfo = "host=slave1 port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
 
 type User struct {
 	FirstName  string `json:"first_name"`
@@ -58,7 +59,7 @@ func sha256StringHash(input string) string {
 }
 
 func generateJWT() (string, error) {
-	expirationTime := time.Now().Add(5 * time.Minute)
+	expirationTime := time.Now().Add(60 * time.Minute)
 	claims := &Claims{
 		Username: "username",
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -72,15 +73,26 @@ func generateJWT() (string, error) {
 
 }
 
+// Функция для чтения всех параметров запроса и возврата их в виде словаря
+func readQueryParams(r *http.Request) map[string][]string {
+	params := make(map[string][]string)
+	q := r.URL.Query()
+	for key, values := range q {
+		params[key] = values
+	}
+	return params
+}
+
 func main() {
 	http.HandleFunc("POST /login", login)
 	http.HandleFunc("POST /user/register", register)
 	http.HandleFunc("GET /user", get_user)
+	http.HandleFunc("GET /user/search", search_like_fname_sname)
 	http.ListenAndServe(":8080", nil)
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
-	db, err := sql.Open("postgres", psqlInfo)
+	db, err := sql.Open("postgres", psqlMasterInfo)
 	if err != nil {
 		panic(err)
 	}
@@ -96,17 +108,17 @@ func login(w http.ResponseWriter, r *http.Request) {
 	err_decoding := json.Unmarshal(b, &user)
 
 	if err_decoding != nil {
-		fmt.Fprint(w, err_decoding.Error())
+		http.Error(w, err_decoding.Error(), http.StatusBadRequest)
 	} else {
 		stmt, err := db.Prepare("SELECT username, password FROM public.users WHERE username=$1")
 		if err != nil {
-			fmt.Fprint(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 		defer stmt.Close()
 
 		rows, err := stmt.Query(user.Username)
 		if err != nil {
-			fmt.Fprint(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
 			for rows.Next() {
 				var (
@@ -114,7 +126,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 					password string
 				)
 				if err := rows.Scan(&username, &password); err != nil {
-					fmt.Fprint(w, err.Error())
+					http.Error(w, err.Error(), http.StatusBadRequest)
 				} else {
 					if user.Username == username && sha256StringHash(user.Password) == password {
 						token, _ := generateJWT()
@@ -124,6 +136,8 @@ func login(w http.ResponseWriter, r *http.Request) {
 						token_json, _ := json.Marshal(tok)
 
 						fmt.Fprintln(w, string(token_json))
+					} else {
+						http.Error(w, "Unauthorized", http.StatusUnauthorized)
 					}
 				}
 			}
@@ -133,7 +147,7 @@ func login(w http.ResponseWriter, r *http.Request) {
 }
 
 func register(w http.ResponseWriter, r *http.Request) {
-	db, err := sql.Open("postgres", psqlInfo)
+	db, err := sql.Open("postgres", psqlMasterInfo)
 	if err != nil {
 		panic(err)
 	}
@@ -149,7 +163,7 @@ func register(w http.ResponseWriter, r *http.Request) {
 	err_decoding := json.Unmarshal(b, &user)
 
 	if err_decoding != nil {
-		fmt.Fprint(w, err_decoding.Error())
+		http.Error(w, err_decoding.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -157,14 +171,14 @@ func register(w http.ResponseWriter, r *http.Request) {
 		"(id,first_name, second_name, birthdate, sex, biography, city, username, password)" +
 		" VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
 	if err != nil {
-		fmt.Fprint(w, err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 	defer stmt.Close()
 
 	dateParse, err_date_parsing := time.Parse("2006-01-02", user.Birthdate)
 
 	if err_date_parsing != nil {
-		fmt.Fprint(w, err_date_parsing.Error())
+		http.Error(w, err_date_parsing.Error(), http.StatusBadRequest)
 	}
 	id := uuid.New()
 	res, err := stmt.Exec(id.String(), user.FirstName,
@@ -176,7 +190,7 @@ func register(w http.ResponseWriter, r *http.Request) {
 		user.Username,
 		sha256StringHash(user.Password))
 	if err != nil {
-		fmt.Fprint(w, err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	} else if res != nil {
 		fmt.Fprintln(w, id.String())
 	}
@@ -192,20 +206,20 @@ func get_user(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if err == jwt.ErrSignatureInvalid {
-			fmt.Fprintln(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		fmt.Fprintln(w, err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if !tkn.Valid {
-		fmt.Fprintln(w, "unauthorized")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	db, err := sql.Open("postgres", psqlInfo)
+	db, err := sql.Open("postgres", psqlSlaveInfo)
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 	defer db.Close()
 
@@ -217,24 +231,25 @@ func get_user(w http.ResponseWriter, r *http.Request) {
 
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
-		panic(err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 
 	err_decoding := json.Unmarshal(b, &params)
 
 	if err_decoding != nil {
-		fmt.Fprint(w, err_decoding.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	} else {
 		stmt, err := db.Prepare("SELECT first_name,second_name,birthdate,sex,biography,city FROM public.users WHERE id=$1")
 		if err != nil {
-			fmt.Fprint(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		}
 		defer stmt.Close()
 
 		rows, err := stmt.Query(params.Id)
 		if err != nil {
-			fmt.Fprint(w, err.Error())
+			http.Error(w, err.Error(), http.StatusBadRequest)
 		} else {
+			var users []User
 			for rows.Next() {
 				var (
 					FirstName  string
@@ -245,13 +260,83 @@ func get_user(w http.ResponseWriter, r *http.Request) {
 					City       string
 				)
 				if err := rows.Scan(&FirstName, &SecondName, &Birthdate, &Sex, &Biography, &City); err != nil {
-					fmt.Fprint(w, err.Error())
+					http.Error(w, err.Error(), http.StatusBadRequest)
 				} else {
 					user := User{FirstName, SecondName, Birthdate, Sex, Biography, City, "", ""}
-					user_json, _ := json.Marshal(user)
-					fmt.Fprintln(w, string(user_json))
+					users = append(users, user)
 				}
 			}
+			resp, _ := json.Marshal(users)
+			fmt.Fprint(w, string(resp))
 		}
+	}
+}
+
+func search_like_fname_sname(w http.ResponseWriter, r *http.Request) {
+	bearerToken := r.Header.Get("Authorization")
+	reqToken := strings.Split(bearerToken, " ")[1]
+	claims := &Claims{}
+	tkn, err := jwt.ParseWithClaims(reqToken, claims, func(token *jwt.Token) (interface{}, error) {
+		return jwtKey, nil
+	})
+	if err != nil {
+		if err == jwt.ErrSignatureInvalid {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !tkn.Valid {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	db, err := sql.Open("postgres", psqlSlaveInfo)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
+	defer db.Close()
+
+	type Params struct {
+		Fname string `json:"first_name"`
+		Sname string `json:"second_name"`
+	}
+
+	var params Params
+
+	for key, values := range readQueryParams(r) {
+		if key == "first_name" {
+			params.Fname = values[0]
+		} else if key == "second_name" {
+			params.Sname = values[0]
+		}
+	}
+
+	stmt, err := db.Prepare("SELECT first_name,second_name FROM public.users WHERE first_name LIKE $1 AND second_name LIKE $2")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.Query(fmt.Sprintf("%s%%", params.Fname), fmt.Sprintf("%s%%", params.Sname))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	} else {
+		var users []User
+		for rows.Next() {
+			var (
+				FirstName  string
+				SecondName string
+			)
+			if err := rows.Scan(&FirstName, &SecondName); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			} else {
+				user := User{FirstName, SecondName, "", "", "", "", "", ""}
+				users = append(users, user)
+			}
+		}
+		resp, _ := json.Marshal(users)
+		fmt.Fprint(w, string(resp))
 	}
 }
