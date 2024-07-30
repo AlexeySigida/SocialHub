@@ -115,6 +115,22 @@
 				}
 			},
 			"response": []
+		},
+		{
+			"name": "/post/add",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "/post/feed",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
 		}
 	]
 }
