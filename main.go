@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -11,14 +12,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/google/uuid"
 
 	_ "github.com/lib/pq" // postgres driver for database/sql
 )
 
-const psqlMasterInfo = "host=master port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
-const psqlSlaveInfo = "host=slave1 port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
+const psqlMasterInfo = "host=db port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
+
+var rdb *redis.Client
+var ctx = context.Background()
+
+// const psqlSlaveInfo = "host=slave1 port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
 
 type User struct {
 	FirstName  string `json:"first_name"`
@@ -46,6 +52,11 @@ type Token struct {
 type Claims struct {
 	Username string `json:"username"`
 	jwt.RegisteredClaims
+}
+
+type Post struct {
+	ID      int    `json:"id"`
+	Content string `json:"content"`
 }
 
 // sha256Hash возвращает SHA-256 хэш строки.
@@ -83,11 +94,66 @@ func readQueryParams(r *http.Request) map[string][]string {
 	return params
 }
 
+func initializeCash() error {
+	db, err := sql.Open("postgres", psqlMasterInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	posts, err := rdb.LRange(ctx, "posts_feed", 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("error in getting: %v", err)
+	}
+	if len(posts) > 10 {
+		return nil
+	}
+
+	rows, err := db.Query("SELECT id, content from public.posts limit 10")
+	if err != nil {
+		return fmt.Errorf("error in query: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var post Post
+		if err := rows.Scan(&post.ID, &post.Content); err != nil {
+			return fmt.Errorf("error in scan: %v", err)
+		}
+
+		postData, err := json.Marshal(post)
+		if err != nil {
+			return fmt.Errorf("error in marshal: %v", err)
+		}
+
+		fmt.Println(string(postData))
+
+		if err := rdb.RPush(ctx, "posts_feed", postData).Err(); err != nil {
+			return fmt.Errorf("error in push: %v", err)
+		}
+	}
+
+	return nil
+}
+
 func main() {
+	rdb = redis.NewClient(&redis.Options{
+		Addr:     "redis:6379",
+		Password: "", // no password set
+		DB:       0,  // use default DB
+	})
+
+	if err := initializeCash(); err != nil {
+		panic(err)
+	}
+
 	http.HandleFunc("POST /login", login)
 	http.HandleFunc("POST /user/register", register)
 	http.HandleFunc("GET /user", get_user)
 	http.HandleFunc("GET /user/search", search_like_fname_sname)
+	http.HandleFunc("GET /post/feed", post_feed)
+	http.HandleFunc("POST /post/add", post_add)
+
 	http.ListenAndServe(":8080", nil)
 }
 
@@ -130,9 +196,11 @@ func login(w http.ResponseWriter, r *http.Request) {
 				} else {
 					if user.Username == username && sha256StringHash(user.Password) == password {
 						token, _ := generateJWT()
+
 						tokens = append(tokens, token)
 
 						tok := Token{token}
+
 						token_json, _ := json.Marshal(tok)
 
 						fmt.Fprintln(w, string(token_json))
@@ -217,7 +285,7 @@ func get_user(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := sql.Open("postgres", psqlSlaveInfo)
+	db, err := sql.Open("postgres", psqlMasterInfo)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
@@ -292,7 +360,7 @@ func search_like_fname_sname(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, err := sql.Open("postgres", psqlSlaveInfo)
+	db, err := sql.Open("postgres", psqlMasterInfo)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
@@ -339,4 +407,81 @@ func search_like_fname_sname(w http.ResponseWriter, r *http.Request) {
 		resp, _ := json.Marshal(users)
 		fmt.Fprint(w, string(resp))
 	}
+}
+
+func post_feed(w http.ResponseWriter, r *http.Request) {
+	posts, err := rdb.LRange(ctx, "posts_feed", 0, -1).Result()
+	if err != nil {
+		http.Error(w, "Error getting posts from Redis", http.StatusInternalServerError)
+		return
+	}
+
+	var feed []Post
+	for _, post := range posts {
+		var p Post
+		if err := json.Unmarshal([]byte(post), &p); err != nil {
+			http.Error(w, "Error unmarshalling post", http.StatusInternalServerError)
+			fmt.Println(post)
+			return
+		}
+		feed = append(feed, p)
+	}
+
+	resp, _ := json.Marshal(feed)
+	fmt.Fprint(w, string(resp))
+}
+
+func post_add(w http.ResponseWriter, r *http.Request) {
+	db, err := sql.Open("postgres", psqlMasterInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	var post Post
+	if err := json.NewDecoder(r.Body).Decode(&post); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	postData, err := json.Marshal(post)
+	if err != nil {
+		http.Error(w, "Error marshalling post", http.StatusInternalServerError)
+		return
+	}
+
+	if err := rdb.RPush(ctx, "posts_feed", postData).Err(); err != nil {
+		http.Error(w, "Error adding post to Redis", http.StatusInternalServerError)
+		return
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		http.Error(w, "Error starting transaction", http.StatusInternalServerError)
+		return
+	}
+
+	_, err = tx.Exec("insert into public.posts(id,user_id,content,post_date) values ($1,'12346',$2 ,timestamp '2024-07-29')", post.ID, post.Content)
+	if err != nil {
+		tx.Rollback()
+		http.Error(w, "Error adding post to database", http.StatusInternalServerError)
+		return
+	}
+
+	if err = tx.Commit(); err != nil {
+		http.Error(w, "Error committing transaction", http.StatusInternalServerError)
+		return
+	}
+
+	posts, err := rdb.LRange(ctx, "posts_feed", 0, -1).Result()
+	if err != nil {
+		return
+	}
+	if len(posts) > 10 {
+		if err := rdb.LPop(ctx, "posts_feed").Err(); err != nil {
+			// http.Error(w, "Error deleting posts from Redis", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -3,7 +3,7 @@ version: '3.9'
 
 services:
   back:
-    image: social-hub:0.0.3
+    image: social-hub:0.0.4
     ports:
       - 8080:8080
     networks:

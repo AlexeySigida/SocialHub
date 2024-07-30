@@ -10,6 +10,18 @@ CREATE TABLE public.users (
     password BYTEA NOT NULL
 );
 
+CREATE TABLE public.subscribers (
+	id SERIAL primary KEY,
+    user_id VARCHAR(255) not NULL
+);
+
+CREATE TABLE public.posts (
+	id SERIAL primary KEY,
+    user_id VARCHAR(255) not NULL,
+    content text not NULL,
+    post_date TIMESTAMP NOT NULL
+);
+
 -- create extension if not exists "uuid-ossp"
 
 -- INSERT INTO public.users

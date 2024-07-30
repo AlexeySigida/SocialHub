@@ -1,0 +1,16 @@
+version: '2'
+
+services:
+  redis:
+    image: 'redis:7.4.0'
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    ports:
+      - 6379:6379
+    networks:
+      - pgnet_ext
+
+networks:
+  pgnet_ext:
+    name: pgnet
+    external: true
