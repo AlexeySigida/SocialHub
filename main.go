@@ -20,6 +20,7 @@ import (
 )
 
 const psqlMasterInfo = "host=db port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
+const psqlDialogInfo = "host=citus_master port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
 
 var rdb *redis.Client
 var ctx = context.Background()
@@ -49,6 +50,13 @@ type Token struct {
 	Token string `json:"token"`
 }
 
+type AuthorzatedUser struct {
+	Username string `json:"username"`
+	Token    string `json:"token"`
+}
+
+var authorizatedUsers []AuthorzatedUser
+
 type Claims struct {
 	Username string `json:"username"`
 	jwt.RegisteredClaims
@@ -69,10 +77,10 @@ func sha256StringHash(input string) string {
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func generateJWT() (string, error) {
+func generateJWT(username string) (string, error) {
 	expirationTime := time.Now().Add(60 * time.Minute)
 	claims := &Claims{
-		Username: "username",
+		Username: username,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime),
 		},
@@ -136,6 +144,28 @@ func initializeCash() error {
 	return nil
 }
 
+func initializeDialog() error {
+	db, err := sql.Open("postgres", psqlDialogInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	_, err1 := db.Query("SELECT * from public.dialog limit 1")
+	if err1 != nil {
+		_, err2 := db.Query("CREATE TABLE dialog (sender_id VARCHAR(255) NOT NULL, getter_id VARCHAR(255) NOT NULL, message text NOT NULL, message_dt timestamp NOT NULL);")
+		if err2 != nil {
+			return fmt.Errorf("error in query: %v", err1)
+		}
+		_, err3 := db.Query("SELECT create_distributed_table('dialog', 'message_dt');")
+		if err3 != nil {
+			return fmt.Errorf("error in query: %v", err2)
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	rdb = redis.NewClient(&redis.Options{
 		Addr:     "redis:6379",
@@ -147,12 +177,18 @@ func main() {
 		panic(err)
 	}
 
+	if err := initializeDialog(); err != nil {
+		panic(err)
+	}
+
 	http.HandleFunc("POST /login", login)
 	http.HandleFunc("POST /user/register", register)
 	http.HandleFunc("GET /user", get_user)
 	http.HandleFunc("GET /user/search", search_like_fname_sname)
 	http.HandleFunc("GET /post/feed", post_feed)
 	http.HandleFunc("POST /post/add", post_add)
+	http.HandleFunc("POST /dialog/send", dialog_send)
+	http.HandleFunc("GET /dialog/list", dialog_list)
 
 	http.ListenAndServe(":8080", nil)
 }
@@ -195,13 +231,15 @@ func login(w http.ResponseWriter, r *http.Request) {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 				} else {
 					if user.Username == username && sha256StringHash(user.Password) == password {
-						token, _ := generateJWT()
+						token, _ := generateJWT(username)
 
 						tokens = append(tokens, token)
 
 						tok := Token{token}
 
 						token_json, _ := json.Marshal(tok)
+
+						authorizatedUsers = append(authorizatedUsers, AuthorzatedUser{username, tok.Token})
 
 						fmt.Fprintln(w, string(token_json))
 					} else {
@@ -484,4 +522,133 @@ func post_add(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func dialog_send(w http.ResponseWriter, r *http.Request) {
+	db, err := sql.Open("postgres", psqlDialogInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	db_master, err := sql.Open("postgres", psqlMasterInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db_master.Close()
+
+	type Dialog struct {
+		GetterId string `json:"getter_id"`
+		Text     string `json:"text"`
+	}
+
+	var dialog Dialog
+	if err := json.NewDecoder(r.Body).Decode(&dialog); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var current_user string
+	token := r.Header.Get("Authorization")
+	for i := 0; i < len(authorizatedUsers); i++ {
+		if strings.Replace(token, "Bearer ", "", -1) == authorizatedUsers[i].Token {
+			current_user = authorizatedUsers[i].Username
+			break
+		}
+	}
+	if current_user == "" {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	rows, err2 := db_master.Query("select id from public.users where username=$1 limit 1", current_user)
+	if err2 != nil {
+		http.Error(w, "Error getting user id", http.StatusInternalServerError)
+		return
+	}
+	for rows.Next() {
+		if err := rows.Scan(&current_user); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+	}
+
+	_, err1 := db.Query("insert into public.dialog(sender_id,getter_id,message,message_dt) values ($1,$2,$3,$4)", current_user, dialog.GetterId, dialog.Text, time.Now())
+	if err1 != nil {
+		fmt.Println(err1)
+		http.Error(w, "Error adding dialog to database", http.StatusInternalServerError)
+		return
+	}
+
+	fmt.Fprintln(w, "Sent")
+}
+
+func dialog_list(w http.ResponseWriter, r *http.Request) {
+	db, err := sql.Open("postgres", psqlDialogInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	db_master, err := sql.Open("postgres", psqlMasterInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db_master.Close()
+
+	var current_user string
+
+	token := r.Header.Get("Authorization")
+	for i := 0; i < len(authorizatedUsers); i++ {
+		if strings.Replace(token, "Bearer ", "", -1) == authorizatedUsers[i].Token {
+			current_user = authorizatedUsers[i].Username
+			break
+		}
+	}
+	if current_user == "" {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return
+	}
+	rows, err2 := db_master.Query("select id from public.users where username=$1 limit 1", current_user)
+	if err2 != nil {
+		http.Error(w, "Error getting user id", http.StatusInternalServerError)
+		return
+	}
+	for rows.Next() {
+		if err := rows.Scan(&current_user); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		}
+	}
+
+	reciepient_id := r.URL.Query().Get("reciepient_id")
+	if reciepient_id == "" {
+		http.Error(w, "reciepient_id is required", http.StatusBadRequest)
+		return
+	}
+
+	rows, err1 := db.Query("select sender_id as from, getter_id as to, message as text from public.dialog where sender_id=$1 and getter_id=$2 or sender_id=$2 and getter_id=$1 order by message_dt desc", current_user, reciepient_id)
+	if err1 != nil {
+		http.Error(w, "Error getting dialogs", http.StatusInternalServerError)
+		return
+	}
+
+	type Dialog struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+		Text string `json:"text"`
+	}
+	var dialog []Dialog
+	for rows.Next() {
+		var (
+			From string
+			To   string
+			Text string
+		)
+		if err := rows.Scan(&From, &To, &Text); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+		} else {
+			dialog = append(dialog, Dialog{From: From, To: To, Text: Text})
+		}
+	}
+
+	resp, _ := json.Marshal(dialog)
+	fmt.Fprint(w, string(resp))
 }

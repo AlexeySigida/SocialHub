@@ -2,7 +2,7 @@
 	"info": {
 		"_postman_id": "9e0f712d-d90f-41c9-a347-81bb9c01bdc6",
 		"name": "SocialHub",
-		"schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
 		"_exporter_id": "35015072"
 	},
 	"item": [
@@ -20,7 +20,17 @@
 						}
 					}
 				},
-				"url": "localhost:8080/user/register"
+				"url": {
+					"raw": "localhost:8080/user/register",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"user",
+						"register"
+					]
+				}
 			},
 			"response": []
 		},
@@ -38,7 +48,16 @@
 						}
 					}
 				},
-				"url": "localhost:8080/login"
+				"url": {
+					"raw": "localhost:8080/login",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"login"
+					]
+				}
 			},
 			"response": []
 		},
@@ -50,9 +69,13 @@
 			"request": {
 				"auth": {
 					"type": "bearer",
-					"bearer": {
-						"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6InVzZXJuYW1lIiwiZXhwIjoxNzE3MzUxMjM3fQ.pSVvZ-p5btkzQ1x5CG6jRxRxBoOfzh47fDF-zusiRv8"
-					}
+					"bearer": [
+						{
+							"key": "token",
+							"value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6InVzZXJuYW1lIiwiZXhwIjoxNzE3MzUxMjM3fQ.pSVvZ-p5btkzQ1x5CG6jRxRxBoOfzh47fDF-zusiRv8",
+							"type": "string"
+						}
+					]
 				},
 				"method": "GET",
 				"header": [],
@@ -65,7 +88,16 @@
 						}
 					}
 				},
-				"url": "localhost:8080/user"
+				"url": {
+					"raw": "localhost:8080/user",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"user"
+					]
+				}
 			},
 			"response": []
 		},
@@ -77,9 +109,13 @@
 			"request": {
 				"auth": {
 					"type": "bearer",
-					"bearer": {
-						"token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6InVzZXJuYW1lIiwiZXhwIjoxNzE3MzUzNzMzfQ.W9hjBPOJacjAV_ibh5wbNGMqib_Tvzp8hE_BNEmikVs"
-					}
+					"bearer": [
+						{
+							"key": "token",
+							"value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6InVzZXJuYW1lIiwiZXhwIjoxNzE3MzUzNzMzfQ.W9hjBPOJacjAV_ibh5wbNGMqib_Tvzp8hE_BNEmikVs",
+							"type": "string"
+						}
+					]
 				},
 				"method": "GET",
 				"header": [],
@@ -125,10 +161,87 @@
 			"response": []
 		},
 		{
-			"name": "/post/feed",
+			"name": "/dialog/send",
 			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6InRlc3QxMjM0MSIsImV4cCI6MTcyMzE0NDM1Nn0._NC6T8lnH-CDdoshCnY8r9ncIxE086j3bd_iPj-H3xQ",
+							"type": "string"
+						}
+					]
+				},
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"getter_id\": \"b5febdf5-11f4-4db4-bb5d-f80ed1ce26eb\",\r\n    \"text\": \"test5\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "localhost:8080/dialog/send",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"dialog",
+						"send"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "/dialog/list",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"auth": {
+					"type": "bearer",
+					"bearer": [
+						{
+							"key": "token",
+							"value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6InRlc3QxMjM0IiwiZXhwIjoxNzIzNzUwNDA0fQ.uLdxwHMqqScvFEYjI5rcxhoD-LZRoLt9gwhcABjNiNM",
+							"type": "string"
+						}
+					]
+				},
 				"method": "GET",
-				"header": []
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"getter_id\": \"b5febdf5-11f4-4db4-bb5d-f80ed1ce26eb\",\r\n    \"text\": \"test5\"\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "localhost:8080/dialog/list?reciepient_id=a11b9dec-9385-46ba-a98e-80b1045ee063",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"dialog",
+						"list"
+					],
+					"query": [
+						{
+							"key": "reciepient_id",
+							"value": "a11b9dec-9385-46ba-a98e-80b1045ee063"
+						}
+					]
+				}
 			},
 			"response": []
 		}
