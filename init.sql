@@ -11,7 +11,7 @@ CREATE TABLE public.users (
 );
 
 CREATE TABLE public.subscribers (
-	id SERIAL primary KEY,
+	id VARCHAR(255) not NULL,
     user_id VARCHAR(255) not NULL
 );
 

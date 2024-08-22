@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +16,8 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+	"github.com/streadway/amqp"
 
 	_ "github.com/lib/pq" // postgres driver for database/sql
 )
@@ -24,6 +27,12 @@ const psqlDialogInfo = "host=citus_master port=5432 user=postgres password=pass 
 
 var rdb *redis.Client
 var ctx = context.Background()
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+var rabbitConn *amqp.Connection
 
 // const psqlSlaveInfo = "host=slave1 port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
 
@@ -180,6 +189,12 @@ func main() {
 	if err := initializeDialog(); err != nil {
 		panic(err)
 	}
+	var err error
+	rabbitConn, err = amqp.Dial("amqp://guest:guest@rabbitmq:5672/")
+	if err != nil {
+		panic(err)
+	}
+	defer rabbitConn.Close()
 
 	http.HandleFunc("POST /login", login)
 	http.HandleFunc("POST /user/register", register)
@@ -189,6 +204,8 @@ func main() {
 	http.HandleFunc("POST /post/add", post_add)
 	http.HandleFunc("POST /dialog/send", dialog_send)
 	http.HandleFunc("GET /dialog/list", dialog_list)
+	http.HandleFunc("/post/create", post_create)
+	http.HandleFunc("/post/feed/posted", post_feed_posted)
 
 	http.ListenAndServe(":8080", nil)
 }
@@ -651,4 +668,204 @@ func dialog_list(w http.ResponseWriter, r *http.Request) {
 
 	resp, _ := json.Marshal(dialog)
 	fmt.Fprint(w, string(resp))
+}
+
+func post_create(w http.ResponseWriter, r *http.Request) {
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("Error init upgrader", err)
+		return
+	}
+	defer ws.Close()
+	db_master, err := sql.Open("postgres", psqlMasterInfo)
+	if err != nil {
+		log.Println("Error init postgres conn", err)
+		return
+	}
+	defer db_master.Close()
+
+	var post Post
+	if err := ws.ReadJSON(&post); err != nil {
+		log.Println("Invalid request body", err)
+		return
+	}
+
+	tx, err := db_master.Begin()
+	if err != nil {
+		log.Println("Error starting transaction", err)
+		return
+	}
+
+	_, err = tx.Exec("insert into public.posts(id,user_id,content,post_date) values ($1,'12346',$2 ,timestamp '2024-07-29')", post.ID, post.Content)
+	if err != nil {
+		tx.Rollback()
+		log.Println("Error adding post to database", err)
+		return
+	}
+
+	if err = tx.Commit(); err != nil {
+		log.Println("Error committing transaction", err)
+		return
+	}
+
+	var current_user string
+
+	token := r.Header.Get("Authorization")
+	for i := 0; i < len(authorizatedUsers); i++ {
+		if strings.Replace(token, "Bearer ", "", -1) == authorizatedUsers[i].Token {
+			current_user = authorizatedUsers[i].Username
+			break
+		}
+	}
+	if current_user == "" {
+		log.Println("Invalid token", err)
+		return
+	}
+	rows, err2 := db_master.Query("select id from public.users where username=$1 limit 1", current_user)
+	if err2 != nil {
+		log.Println("Error getting user id", err)
+		return
+	}
+	for rows.Next() {
+		if err := rows.Scan(&current_user); err != nil {
+			log.Println(err.Error())
+		}
+	}
+
+	publishPost(post, current_user)
+}
+
+func post_feed_posted(w http.ResponseWriter, r *http.Request) {
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer ws.Close()
+
+	db, err := sql.Open("postgres", psqlMasterInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	var current_user string
+
+	token := r.Header.Get("Authorization")
+	for i := 0; i < len(authorizatedUsers); i++ {
+		if strings.Replace(token, "Bearer ", "", -1) == authorizatedUsers[i].Token {
+			current_user = authorizatedUsers[i].Username
+			break
+		}
+	}
+	if current_user == "" {
+		log.Println("Invalid token", err)
+		return
+	}
+	rows, err2 := db.Query("select id from public.users where username=$1 limit 1", current_user)
+	if err2 != nil {
+		log.Println("Error getting user id", err)
+		return
+	}
+	for rows.Next() {
+		if err := rows.Scan(&current_user); err != nil {
+			log.Println(err.Error())
+		}
+	}
+
+	ch, err := rabbitConn.Channel()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer ch.Close()
+
+	q, err := ch.QueueDeclare(
+		current_user,
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	msgs, err := ch.Consume(
+		q.Name,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	for msg := range msgs {
+		var post Post
+		err := json.Unmarshal(msg.Body, &post)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		ws.WriteJSON(post)
+	}
+}
+
+func publishPost(post Post, user_id string) {
+	ch, err := rabbitConn.Channel()
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer ch.Close()
+
+	db, err := sql.Open("postgres", psqlMasterInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+
+	rows, err := db.Query("select user_id from public.subscribers where user_id=$1", user_id)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var subscriber_id string
+		err := rows.Scan(&subscriber_id)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		body, err := json.Marshal(post)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+
+		err = ch.Publish(
+			"",
+			subscriber_id,
+			false,
+			false,
+			amqp.Publishing{
+				ContentType: "application/json",
+				Body:        body,
+			},
+		)
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+	}
 }
