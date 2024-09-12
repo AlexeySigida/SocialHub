@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  tarantool:
+    image: tarantool/tarantool:2.10  # Specify the version of Tarantool you want to use
+    container_name: tarantool
+    ports:
+      - "3301:3301"  # Default port for Tarantool
+    volumes:
+      - ./init.lua:/opt/tarantool/init.lua  # Mount the initialization script
+    command: tarantool /opt/tarantool/init.lua  # Run Tarantool with the init script
+    networks:
+      - pgnet_ext
+
+networks:
+  pgnet_ext:
+    name: pgnet
+    external: true
