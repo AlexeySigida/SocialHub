@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 	"github.com/streadway/amqp"
+	"github.com/tarantool/go-tarantool"
 
 	_ "github.com/lib/pq" // postgres driver for database/sql
 )
@@ -154,22 +156,17 @@ func initializeCash() error {
 }
 
 func initializeDialog() error {
-	db, err := sql.Open("postgres", psqlDialogInfo)
+	conn, err := tarantool.Connect("tarantool:3301", tarantool.Opts{
+		User: "guest",
+	})
 	if err != nil {
-		panic(err)
+		return err
 	}
-	defer db.Close()
+	defer conn.Close()
 
-	_, err1 := db.Query("SELECT * from public.dialog limit 1")
-	if err1 != nil {
-		_, err2 := db.Query("CREATE TABLE dialog (sender_id VARCHAR(255) NOT NULL, getter_id VARCHAR(255) NOT NULL, message text NOT NULL, message_dt timestamp NOT NULL);")
-		if err2 != nil {
-			return fmt.Errorf("error in query: %v", err1)
-		}
-		_, err3 := db.Query("SELECT create_distributed_table('dialog', 'message_dt');")
-		if err3 != nil {
-			return fmt.Errorf("error in query: %v", err2)
-		}
+	_, err = conn.Call("initialize_dialog", []interface{}{})
+	if err != nil {
+		return fmt.Errorf("error in initialize_dialog: %v", err)
 	}
 
 	return nil
@@ -542,56 +539,30 @@ func post_add(w http.ResponseWriter, r *http.Request) {
 }
 
 func dialog_send(w http.ResponseWriter, r *http.Request) {
-	db, err := sql.Open("postgres", psqlDialogInfo)
+	conn, err := tarantool.Connect("tarantool:3301", tarantool.Opts{
+		User: "guest",
+	})
 	if err != nil {
-		panic(err)
+		http.Error(w, "Connection error", http.StatusInternalServerError)
+		return
 	}
-	defer db.Close()
+	defer conn.Close()
 
-	db_master, err := sql.Open("postgres", psqlMasterInfo)
-	if err != nil {
-		panic(err)
-	}
-	defer db_master.Close()
-
-	type Dialog struct {
+	var dialog struct {
 		GetterId string `json:"getter_id"`
 		Text     string `json:"text"`
 	}
-
-	var dialog Dialog
 	if err := json.NewDecoder(r.Body).Decode(&dialog); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	var current_user string
+	// Assuming token and current_user logic remains the same
 	token := r.Header.Get("Authorization")
-	for i := 0; i < len(authorizatedUsers); i++ {
-		if strings.Replace(token, "Bearer ", "", -1) == authorizatedUsers[i].Token {
-			current_user = authorizatedUsers[i].Username
-			break
-		}
-	}
-	if current_user == "" {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
+	current_user := getCurrentUser(token)
 
-	rows, err2 := db_master.Query("select id from public.users where username=$1 limit 1", current_user)
-	if err2 != nil {
-		http.Error(w, "Error getting user id", http.StatusInternalServerError)
-		return
-	}
-	for rows.Next() {
-		if err := rows.Scan(&current_user); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		}
-	}
-
-	_, err1 := db.Query("insert into public.dialog(sender_id,getter_id,message,message_dt) values ($1,$2,$3,$4)", current_user, dialog.GetterId, dialog.Text, time.Now())
-	if err1 != nil {
-		fmt.Println(err1)
+	_, err = conn.Call("dialog_send", []interface{}{current_user, dialog.GetterId, dialog.Text})
+	if err != nil {
 		http.Error(w, "Error adding dialog to database", http.StatusInternalServerError)
 		return
 	}
@@ -599,75 +570,61 @@ func dialog_send(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "Sent")
 }
 
-func dialog_list(w http.ResponseWriter, r *http.Request) {
-	db, err := sql.Open("postgres", psqlDialogInfo)
-	if err != nil {
-		panic(err)
+func convertMapI2S(data interface{}) interface{} {
+	switch v := data.(type) {
+	case map[interface{}]interface{}:
+		newMap := make(map[string]interface{})
+		for key, value := range v {
+			strKey := fmt.Sprintf("%v", key)      // Convert key to string
+			newMap[strKey] = convertMapI2S(value) // Recursively convert values
+		}
+		return newMap
+	case []interface{}:
+		for i, value := range v {
+			v[i] = convertMapI2S(value) // Recursively convert elements in slices
+		}
 	}
-	defer db.Close()
-	db_master, err := sql.Open("postgres", psqlMasterInfo)
-	if err != nil {
-		panic(err)
-	}
-	defer db_master.Close()
+	return data
+}
 
-	var current_user string
+func dialog_list(w http.ResponseWriter, r *http.Request) {
+	conn, err := tarantool.Connect("tarantool:3301", tarantool.Opts{
+		User: "guest",
+	})
+	if err != nil {
+		http.Error(w, "Connection error", http.StatusInternalServerError)
+		return
+	}
+	defer conn.Close()
 
 	token := r.Header.Get("Authorization")
-	for i := 0; i < len(authorizatedUsers); i++ {
-		if strings.Replace(token, "Bearer ", "", -1) == authorizatedUsers[i].Token {
-			current_user = authorizatedUsers[i].Username
-			break
-		}
-	}
-	if current_user == "" {
-		http.Error(w, "Invalid token", http.StatusUnauthorized)
-		return
-	}
-	rows, err2 := db_master.Query("select id from public.users where username=$1 limit 1", current_user)
-	if err2 != nil {
-		http.Error(w, "Error getting user id", http.StatusInternalServerError)
-		return
-	}
-	for rows.Next() {
-		if err := rows.Scan(&current_user); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		}
-	}
+	current_user := getCurrentUser(token)
 
-	reciepient_id := r.URL.Query().Get("reciepient_id")
-	if reciepient_id == "" {
+	recipient_id := r.URL.Query().Get("reciepient_id")
+	if recipient_id == "" {
 		http.Error(w, "reciepient_id is required", http.StatusBadRequest)
 		return
 	}
 
-	rows, err1 := db.Query("select sender_id as from, getter_id as to, message as text from public.dialog where sender_id=$1 and getter_id=$2 or sender_id=$2 and getter_id=$1 order by message_dt desc", current_user, reciepient_id)
-	if err1 != nil {
+	resp, err := conn.Call("dialog_list", []interface{}{current_user, recipient_id})
+	if err != nil {
 		http.Error(w, "Error getting dialogs", http.StatusInternalServerError)
 		return
 	}
 
-	type Dialog struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-		Text string `json:"text"`
-	}
-	var dialog []Dialog
-	for rows.Next() {
-		var (
-			From string
-			To   string
-			Text string
-		)
-		if err := rows.Scan(&From, &To, &Text); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		} else {
-			dialog = append(dialog, Dialog{From: From, To: To, Text: Text})
-		}
+	fmt.Println(resp)
+	fmt.Println(resp.Data[0])
+	fmt.Println(reflect.TypeOf(resp))
+	fmt.Println(reflect.TypeOf(resp.Data[0]))
+	fmt.Println(convertMapI2S(resp.Data))
+	dialogs, err := json.Marshal(convertMapI2S(resp.Data))
+	if err != nil {
+		fmt.Println(err)
+		http.Error(w, "Error encoding dialogs", http.StatusInternalServerError)
+		return
 	}
 
-	resp, _ := json.Marshal(dialog)
-	fmt.Fprint(w, string(resp))
+	fmt.Fprint(w, string(dialogs))
 }
 
 func post_create(w http.ResponseWriter, r *http.Request) {
@@ -868,4 +825,34 @@ func publishPost(post Post, user_id string) {
 			continue
 		}
 	}
+}
+
+func getCurrentUser(token string) string {
+	var current_user string
+	db_master, err := sql.Open("postgres", psqlMasterInfo)
+	if err != nil {
+		panic(err)
+	}
+	defer db_master.Close()
+
+	for i := 0; i < len(authorizatedUsers); i++ {
+		if strings.Replace(token, "Bearer ", "", -1) == authorizatedUsers[i].Token {
+			current_user = authorizatedUsers[i].Username
+			break
+		}
+	}
+	if current_user == "" {
+		panic("Empty user")
+	}
+	rows, err2 := db_master.Query("select id from public.users where username=$1 limit 1", current_user)
+	if err2 != nil {
+		panic(err2)
+	}
+	for rows.Next() {
+		if err := rows.Scan(&current_user); err != nil {
+			panic(err)
+		}
+	}
+
+	return current_user
 }
