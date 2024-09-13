@@ -4,7 +4,7 @@
 
 
 1. git clone
-2. docker build . -t social-hub:0.0.8
+2. docker build . -t social-hub:0.0.9
 3. docker build ./chat-service/. -t chat-service:0.0.1
 4. docker network create pgnet
 5. docker compose -f cash-compose.yml up -d

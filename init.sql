@@ -28,6 +28,10 @@ CREATE TABLE public.tokens (
     created_at TIMESTAMP NOT NULL
 );
 
+
+CREATE ROLE repl_user WITH REPLICATION LOGIN PASSWORD 'repl_password';
+
+
 -- create extension if not exists "uuid-ossp"
 
 -- INSERT INTO public.users

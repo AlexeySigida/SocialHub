@@ -3,9 +3,14 @@ version: '3.9'
 
 services:
   back:
-    image: social-hub:0.0.8
-    ports:
-      - 8080:8080
+    image: social-hub:0.0.9
+    environment:
+      RABBITMQ_HOST: rabbitmq
+    networks:
+      - pgnet_ext
+  
+  back-2:
+    image: social-hub:0.0.9
     environment:
       RABBITMQ_HOST: rabbitmq
     networks:
@@ -13,6 +18,15 @@ services:
   
   chat-service:
     image: chat-service:0.0.1
+    networks:
+      - pgnet_ext
+
+  nginx:
+    image: nginx:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
     networks:
       - pgnet_ext
 
