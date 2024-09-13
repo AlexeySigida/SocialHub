@@ -3,11 +3,16 @@ version: '3.9'
 
 services:
   back:
-    image: social-hub:0.0.7
+    image: social-hub:0.0.8
     ports:
       - 8080:8080
     environment:
       RABBITMQ_HOST: rabbitmq
+    networks:
+      - pgnet_ext
+  
+  chat-service:
+    image: chat-service:0.0.1
     networks:
       - pgnet_ext
 

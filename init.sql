@@ -22,6 +22,12 @@ CREATE TABLE public.posts (
     post_date TIMESTAMP NOT NULL
 );
 
+CREATE TABLE public.tokens (
+	user_id VARCHAR(255) not NULL,
+    token VARCHAR(255) not NULL,
+    created_at TIMESTAMP NOT NULL
+);
+
 -- create extension if not exists "uuid-ossp"
 
 -- INSERT INTO public.users
