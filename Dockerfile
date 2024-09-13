@@ -12,7 +12,8 @@ RUN go mod init social-hub && \
     go get github.com/go-redis/redis/v8 && \
     go get github.com/gorilla/websocket && \
     go get github.com/streadway/amqp && \
-    go get github.com/tarantool/go-tarantool
+    go get github.com/tarantool/go-tarantool && \
+    go get github.com/gorilla/mux
 
 COPY main.go /app
 

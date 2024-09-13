@@ -17,6 +17,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/streadway/amqp"
 	"github.com/tarantool/go-tarantool"
@@ -193,18 +194,75 @@ func main() {
 	}
 	defer rabbitConn.Close()
 
-	http.HandleFunc("POST /login", login)
-	http.HandleFunc("POST /user/register", register)
-	http.HandleFunc("GET /user", get_user)
-	http.HandleFunc("GET /user/search", search_like_fname_sname)
-	http.HandleFunc("GET /post/feed", post_feed)
-	http.HandleFunc("POST /post/add", post_add)
-	http.HandleFunc("POST /dialog/send", dialog_send)
-	http.HandleFunc("GET /dialog/list", dialog_list)
-	http.HandleFunc("/post/create", post_create)
-	http.HandleFunc("/post/feed/posted", post_feed_posted)
+	router := mux.NewRouter()
 
-	http.ListenAndServe(":8080", nil)
+	router.HandleFunc("/dialog/send", proxyDialogSend).Methods("POST")
+	router.HandleFunc("/dialog/list", proxyDialogList).Methods("GET")
+	router.HandleFunc("/login", login).Methods("POST")
+	router.HandleFunc("/user/register", register).Methods("POST")
+	router.HandleFunc("/user", get_user).Methods("GET")
+	router.HandleFunc("/user/search", search_like_fname_sname).Methods("GET")
+	router.HandleFunc("/post/feed", post_feed).Methods("GET")
+	router.HandleFunc("/post/add", post_add).Methods("POST")
+	router.HandleFunc("/post/create", post_create)
+	router.HandleFunc("/post/feed/posted", post_feed_posted)
+
+	log.Fatal(http.ListenAndServe(":8080", router))
+}
+
+// Proxy to forward the request to the chat service
+func proxyDialogSend(w http.ResponseWriter, r *http.Request) {
+	proxyRequest(w, r, "http://chat-service:8081/dialog/send")
+}
+
+func proxyDialogList(w http.ResponseWriter, r *http.Request) {
+	// Get the original query parameters from the source request
+	queryParams := r.URL.RawQuery
+
+	// Define the base URL for the chat service
+	baseURL := "http://chat-service:8081/dialog/list"
+
+	// If there are query parameters, append them to the proxy URL
+	var proxyURL string
+	if queryParams != "" {
+		proxyURL = fmt.Sprintf("%s?%s", baseURL, queryParams)
+	} else {
+		proxyURL = baseURL
+	}
+
+	// Proxy the request to the chat service with the constructed URL
+	proxyRequest(w, r, proxyURL)
+}
+
+// A generic function to proxy the request
+func proxyRequest(w http.ResponseWriter, r *http.Request, url string) {
+	req, err := http.NewRequest(r.Method, url, r.Body)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	req.Header.Set("X-User-Id", getCurrentUser(r.Header.Get("Authorization")))
+	req.Header.Set("X-Request-Id", r.Header.Get("X-Request-Id"))
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	fmt.Println(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Failed to call chat service", http.StatusInternalServerError)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read chat service response", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	w.Write(body)
 }
 
 func login(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +312,31 @@ func login(w http.ResponseWriter, r *http.Request) {
 						token_json, _ := json.Marshal(tok)
 
 						authorizatedUsers = append(authorizatedUsers, AuthorzatedUser{username, tok.Token})
+
+						var current_user string
+
+						rows, err2 := db.Query("select id from public.users where username=$1 limit 1", username)
+						if err2 != nil {
+							panic(err2)
+						}
+						for rows.Next() {
+							if err := rows.Scan(&current_user); err != nil {
+								panic(err)
+							}
+						}
+
+						stmt, err := db.Prepare("INSERT INTO public.tokens" +
+							"(user_id, token, created_at)" +
+							" VALUES($1,$2,$3)")
+						if err != nil {
+							http.Error(w, err.Error(), http.StatusBadRequest)
+						}
+						defer stmt.Close()
+						_, errInsert := stmt.Exec(current_user, token, time.Now())
+						if errInsert != nil {
+							http.Error(w, err.Error(), http.StatusBadRequest)
+						}
+						defer db.Close() // close the connection
 
 						fmt.Fprintln(w, string(token_json))
 					} else {
@@ -835,21 +918,27 @@ func getCurrentUser(token string) string {
 	}
 	defer db_master.Close()
 
-	for i := 0; i < len(authorizatedUsers); i++ {
-		if strings.Replace(token, "Bearer ", "", -1) == authorizatedUsers[i].Token {
-			current_user = authorizatedUsers[i].Username
-			break
+	rowsToken, errToken := db_master.Query("select user_id from public.tokens where token=$1 order by created_at desc limit 1", strings.Replace(token, "Bearer ", "", -1))
+	if errToken != nil {
+		panic(errToken)
+	}
+	for rowsToken.Next() {
+		if err := rowsToken.Scan(&current_user); err != nil {
+			panic(err)
 		}
 	}
+
 	if current_user == "" {
 		panic("Empty user")
 	}
-	rows, err2 := db_master.Query("select id from public.users where username=$1 limit 1", current_user)
-	if err2 != nil {
-		panic(err2)
+
+	rowsUser, errUser := db_master.Query("select id from public.users where username=$1 limit 1", current_user)
+	if errUser != nil {
+		panic(errUser)
 	}
-	for rows.Next() {
-		if err := rows.Scan(&current_user); err != nil {
+
+	for rowsUser.Next() {
+		if err := rowsUser.Scan(&current_user); err != nil {
 			panic(err)
 		}
 	}
