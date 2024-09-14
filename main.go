@@ -25,7 +25,7 @@ import (
 	_ "github.com/lib/pq" // postgres driver for database/sql
 )
 
-const psqlMasterInfo = "host=db port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
+const psqlMasterInfo = "host=haproxy port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
 const psqlDialogInfo = "host=citus_master port=5432 user=postgres password=pass dbname=postgres sslmode=disable"
 
 var rdb *redis.Client
