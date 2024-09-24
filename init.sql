@@ -31,6 +31,16 @@ CREATE TABLE public.tokens (
 
 CREATE ROLE repl_user WITH REPLICATION LOGIN PASSWORD 'repl_password';
 
+CREATE TABLE IF NOT EXISTS message_counters (
+    user_id VARCHAR(255) PRIMARY KEY,        -- Unique identifier for the user (could be a UUID or string)
+    unread_count BIGINT DEFAULT 0,           -- Counter for unread messages (default is 0)
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() -- Timestamp for when the counter was last updated
+);
+
+-- Index on the unread_count for faster lookups if needed
+CREATE INDEX IF NOT EXISTS idx_unread_count ON message_counters (unread_count);
+
+
 
 -- create extension if not exists "uuid-ossp"
 

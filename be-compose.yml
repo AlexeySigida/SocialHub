@@ -8,6 +8,13 @@ services:
       RABBITMQ_HOST: rabbitmq
     networks:
       - pgnet_ext
+
+  counter-service:
+    image: counter-service:0.0.1
+    environment:
+      RABBITMQ_HOST: rabbitmq
+    networks:
+      - pgnet_ext
   
   back-2:
     image: social-hub:0.0.9

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -60,7 +61,18 @@ func dialogSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error adding dialog to database", http.StatusInternalServerError)
 		return
 	}
+	// Define the request body
+	requestBody := map[string]int64{
+		"increment": 1, // Change this value to adjust how much to increment
+	}
 
+	// Convert the request body to JSON
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		fmt.Printf("Error encoding JSON: %v\n", err)
+		return
+	}
+	http.Post("http://counter-service:8080/counters?user_id="+currentUser, "application/json", bytes.NewBuffer(jsonBody))
 	fmt.Fprintln(w, "Sent")
 }
 
