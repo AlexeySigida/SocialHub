@@ -50,5 +50,13 @@ func (s *CounterService) IncrementUnreadCount(userID string, increment int64) er
 	}
 
 	// Persist new value to DB
-	return s.storage.UpdateCounter(userID, newCount)
+	errUpdate := s.storage.UpdateCounter(userID, newCount)
+	if errUpdate != nil {
+		errDecr := s.cache.DecrBy(userID, increment)
+		if errDecr != nil {
+			return errDecr
+		}
+		return errUpdate
+	}
+	return err
 }
