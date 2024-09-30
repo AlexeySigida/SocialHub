@@ -24,7 +24,7 @@ services:
       - pgnet_ext
   
   chat-service:
-    image: chat-service:0.0.1
+    image: chat-service:0.0.2
     networks:
       - pgnet_ext
 
