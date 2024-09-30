@@ -39,3 +39,7 @@ func (r *RedisCache) Set(key string, value int64, expiration time.Duration) erro
 func (r *RedisCache) IncrBy(key string, value int64) error {
 	return r.client.IncrBy(r.ctx, key, value).Err()
 }
+
+func (r *RedisCache) DecrBy(key string, value int64) error {
+	return r.client.DecrBy(r.ctx, key, value).Err()
+}

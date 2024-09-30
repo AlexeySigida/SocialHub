@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+  
+  - job_name: 'chat_service'
+    static_configs:
+      - targets: ['chat-service:8081']
+
+  - job_name: 'zabbix'
+    static_configs:
+      - targets: ['zabbix-server:10051']
